@@ -12,8 +12,6 @@ runs a full closed-loop simulation to assess model performance.
 import math
 import numpy as np
 import torch
-
-# Import constants and helpers from our other modules
 from .config import L, K_DELTA, TAU_DELTA, CD
 from .utils import wrap_to_pi
 

@@ -1,5 +1,0 @@
-Base Sim:           Pos. Error (final)=0.112m, Speed RMSE=0.006m/s, Yaw RMSE=0.094rad
-Corrected Sim (SVGP): Pos. Error (final)=0.109m, Speed RMSE=0.006m/s, Yaw RMSE=0.082rad
-Corrected Sim (LINEAR): Pos. Error (final)=0.344m, Speed RMSE=0.006m/s, Yaw RMSE=0.204rad
-Corrected Sim (LSTM SVGP): Pos. Error (final)=0.108m, Speed RMSE=0.006m/s, Yaw RMSE=0.083rad
-Corrected Sim (GRU SVGP): Pos. Error (final)=0.250m, Speed RMSE=0.006m/s, Yaw RMSE=0.200rad

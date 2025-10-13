@@ -8,7 +8,7 @@ train_unified.py - MODULAR & OPTIMIZED FOR REAL-WORLD PERFORMANCE
 
 Train a residual model for YAW RATE ONLY with a choice of:
 1. Model Type: SVGP (probabilistic) or Linear (deterministic)
-2. Encoder: Transformer, LSTM, or GRU
+2. Encoder: Transformer, LSTM, GRU, or MobileViT
 ... and genuine multi-step rollout loss.
 """
 import math
@@ -144,7 +144,50 @@ class WindowDataset(Dataset):
     def __len__(self): return self.X.size(0)
     def __getitem__(self, idx): return self.X[idx], self.Y[idx], idx
 
-# ----------------------- ENCODER DEFINITIONS (Unchanged) -----------------------
+# ----------------------- ENCODER DEFINITIONS -----------------------
+class MobileViTEncoder(torch.nn.Module):
+    """
+    A 1D adaptation of the MobileViT concept for sequential data.
+    It uses 1D convolutions to learn local features efficiently and a
+    Transformer to learn global relationships.
+    """
+    def __init__(self, input_dim=6, d_model=32, nhead=2, d_hid=128, nlayers=2, dropout=0.1):
+        super().__init__()
+        
+        # Convolutional block to learn local features
+        self.conv_block = torch.nn.Sequential(
+            # Input shape: (Batch, Channels=input_dim, Length=history)
+            torch.nn.Conv1d(in_channels=input_dim, out_channels=d_model, kernel_size=3, padding=1),
+            torch.nn.BatchNorm1d(d_model),
+            torch.nn.SiLU(),
+            torch.nn.Conv1d(in_channels=d_model, out_channels=d_model, kernel_size=3, padding=1),
+            torch.nn.BatchNorm1d(d_model),
+            torch.nn.SiLU()
+        )
+
+        # Standard Transformer Encoder for global features
+        encoder_layers = torch.nn.TransformerEncoderLayer(d_model, nhead, d_hid, dropout, batch_first=True)
+        self.transformer_encoder = torch.nn.TransformerEncoder(encoder_layers, nlayers)
+        
+        self.final_norm = torch.nn.LayerNorm(d_model)
+        self.outp = torch.nn.Linear(d_model, d_model)
+
+    def forward(self, x):
+        # Input x shape: (Batch, History, Features)
+        x_conv = x.permute(0, 2, 1) # -> (Batch, Features, History)
+        local_features = self.conv_block(x_conv)
+        local_features = local_features.permute(0, 2, 1) # -> (Batch, History, Features)
+
+        global_features = self.transformer_encoder(local_features)
+        
+        # Simple fusion: element-wise addition
+        fused_features = global_features + local_features
+        
+        # Aggregate features over the time dimension
+        h = fused_features.mean(dim=1)
+        
+        return self.final_norm(self.outp(h))
+
 class TransformerEncoder(torch.nn.Module):
     def __init__(self, input_dim=6, d_model=32, nhead=2, d_hid=128, nlayers=2, dropout=0.1):
         super().__init__()
@@ -182,11 +225,12 @@ class SVGPLayer(gpytorch.models.ApproximateGP):
         self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu=2.5, batch_shape=bs) + gpytorch.kernels.RBFKernel(batch_shape=bs), batch_shape=bs)
     def forward(self, x): return gpytorch.distributions.MultivariateNormal(self.mean_module(x), self.covar_module(x))
 
-# ----------------------- MODEL DEFINITIONS (Unchanged) -----------------------
+# ----------------------- MODEL DEFINITIONS -----------------------
 def build_encoder(encoder_type, d_model, encoder_args):
     if encoder_type == 'transformer': return TransformerEncoder(input_dim=6, d_model=d_model, **encoder_args)
     if encoder_type == 'lstm': return LSTMEncoder(input_dim=6, d_model=d_model, **encoder_args)
     if encoder_type == 'gru': return GRUEncoder(input_dim=6, d_model=d_model, **encoder_args)
+    if encoder_type == 'mobilevit': return MobileViTEncoder(input_dim=6, d_model=d_model, **encoder_args)
     raise ValueError(f"Unknown encoder type: {encoder_type}")
 
 class ResidualModel_SVGP(torch.nn.Module):
@@ -278,7 +322,12 @@ def train_model(model, train_loader, val_meas, val_ctrl, full_meas, full_ctrl, d
             target_unnorm = by * model.y_std + model.y_mean
             mse_unnorm_sum = torch.nn.functional.mse_loss(pred_unnorm, target_unnorm, reduction='sum').item()
             total_train_mse += mse_unnorm_sum
-            pbar.set_postfix(one_step_loss=f"{one_step_loss.item():.2f}", mse=f"{mse_unnorm_sum/bx.size(0):.4f}", roll_mse=f"{roll_r.item():.4f}")
+            roll_val = roll_r.item() if torch.is_tensor(roll_r) else float(roll_r)
+            pbar.set_postfix(
+                one_step_loss=f"{one_step_loss.item():.2f}",
+                mse=f"{mse_unnorm_sum/bx.size(0):.4f}",
+                roll_mse=f"{roll_val:.4f}"
+            )
 
         avg_train_mse = total_train_mse / len(train_loader.dataset)
         train_mse_history.append(avg_train_mse)
@@ -318,7 +367,7 @@ if __name__ == "__main__":
     p.add_argument("--wd", type=float, default=1e-4)
     p.add_argument("--save", default="residual_model.pt")
     p.add_argument("--model_type", type=str, required=True, choices=["svgp", "linear"])
-    p.add_argument("--encoder", type=str, required=True, choices=["transformer", "lstm", "gru"])
+    p.add_argument("--encoder", type=str, required=True, choices=["transformer", "lstm", "gru", "mobilevit"])
     p.add_argument("--dmod", type=int, default=32)
     p.add_argument("--ind", type=int, default=150)
     p.add_argument("--k_roll", type=int, default=5)
@@ -371,7 +420,11 @@ if __name__ == "__main__":
     print("\n" + "="*50); print(f"Values needed for validation.py:\n--y_mean {y_mean[0]:.8f}\n--y_std  {y_std[0]:.8f}"); print("="*50 + "\n")
 
     # --- Initialize Model ---
-    encoder_args = {'nlayers': args.rnn_nlayers, 'dropout': args.rnn_dropout} if args.encoder != 'transformer' else {'nhead': args.tf_nhead, 'd_hid': args.tf_d_hid, 'nlayers': args.tf_nlayers, 'dropout': args.tf_dropout}
+    if args.encoder in ['transformer', 'mobilevit']:
+        encoder_args = {'nhead': args.tf_nhead, 'd_hid': args.tf_d_hid, 'nlayers': args.tf_nlayers, 'dropout': args.tf_dropout}
+    else: # lstm, gru
+        encoder_args = {'nlayers': args.rnn_nlayers, 'dropout': args.rnn_dropout}
+        
     model = None
     if args.model_type == 'svgp':
         model = ResidualModel_SVGP(args.encoder, encoder_args, y_mean, y_std, args.dmod, args.ind, args.lr, args.wd, device).to(device)
@@ -389,4 +442,3 @@ if __name__ == "__main__":
     # Plot the training and validation curves
     if train_history and val_history:
         plot_curves(train_history, val_history, val_epochs, args.model_type, args.encoder)
-

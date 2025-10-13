@@ -12,9 +12,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def wrap_to_pi(angle: float) -> float:
-    """
-    Wraps an angle in radians to the range [-π, π].
-    """
     return math.atan2(math.sin(angle), math.cos(angle))
 
 

@@ -40,7 +40,7 @@ def feat_tensor(state: dict, control: dict, device) -> torch.Tensor:
         control['acc'], control['delta_cmd']
     ], dtype=torch.float32, device=device)
 
-# --- MODEL AND ENCODER DEFINITIONS (Must be identical to training scripts) ---
+# --- MODEL AND ENCODER DEFINITIONS (Unchanged) ---
 class TransformerEncoder(torch.nn.Module):
     def __init__(self, input_dim=6, d_model=32, nhead=2, d_hid=128, nlayers=2, dropout=0.1):
         super().__init__(); self.proj = torch.nn.Linear(input_dim, d_model)
@@ -107,7 +107,7 @@ class DeterministicResidualModel(torch.nn.Module):
     def forward(self, x):
         z = self.encoder(x); pred_norm = self.regressor(z); return pred_norm * self.y_std + self.y_mean
 
-# --- SIMULATION & EVALUATION (Unchanged from before) ---
+# --- SIMULATION & EVALUATION (Unchanged) ---
 def run_base_simulation(meas, ctrl, dt):
     print("Running base simulation (kinematic model only)..."); t_start = time.time()
     N = len(meas); sim_states = []; state = meas[0].copy()
@@ -135,33 +135,24 @@ def run_corrected_simulation(model, meas, ctrl, H, dt, device):
     results_dict = {'pos_x': np.array([s['pos_x'] for s in sim_states]), 'pos_y': np.array([s['pos_y'] for s in sim_states]), 'yaw': np.array([s['yaw'] for s in sim_states]), 'speed': np.array([s['speed'] for s in sim_states])}
     return results_dict, sim_time
 
-# --- MODIFICATION: Updated metrics calculation ---
+# --- Metrics calculation (Unchanged) ---
 def calculate_metrics(real_data, sim_data):
     """Calculates a dictionary of metrics, including error over time."""
-    # Standard RMSE calculations
     yaw_err_ts = np.array([wrap_to_pi(ry - sy) for ry, sy in zip(real_data['yaw'], sim_data['yaw'])])
     yaw_rmse = np.sqrt(np.mean(yaw_err_ts**2))
     speed_rmse = np.sqrt(np.mean((real_data['speed'] - sim_data['speed'])**2))
-    
-    # Positional error calculation at each step
     pos_err_ts = np.sqrt((real_data['pos_x'] - sim_data['pos_x'])**2 + (real_data['pos_y'] - sim_data['pos_y'])**2)
-    
     metrics = {
-        'pos_err_final_m': pos_err_ts[-1],
-        'pos_err_mean_m': np.mean(pos_err_ts),
-        'pos_err_max_m': np.max(pos_err_ts),
-        'speed_rmse_mps': speed_rmse,
-        'yaw_rmse_rad': yaw_rmse,
-        'pos_err_vs_time': pos_err_ts # Keep the time series for plotting
+        'pos_err_final_m': pos_err_ts[-1], 'pos_err_mean_m': np.mean(pos_err_ts),
+        'pos_err_max_m': np.max(pos_err_ts), 'speed_rmse_mps': speed_rmse,
+        'yaw_rmse_rad': yaw_rmse, 'pos_err_vs_time': pos_err_ts
     }
     return metrics
 
 def save_results_to_csv(results_dict, filename="evaluation_summary.csv"):
-    # Remove the time series data before saving to CSV
     results_to_save = results_dict.copy()
     results_to_save.pop('base_pos_err_vs_time', None)
     results_to_save.pop('corr_pos_err_vs_time', None)
-
     file_exists = Path(filename).exists()
     with open(filename, 'a', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=results_to_save.keys())
@@ -170,37 +161,38 @@ def save_results_to_csv(results_dict, filename="evaluation_summary.csv"):
         writer.writerow(results_to_save)
     print(f"Results appended to {filename}")
 
-# --- MODIFICATION: Updated plotting function ---
+# --- NEW FUNCTION TO SAVE ERROR TIME SERIES ---
+def save_error_timeseries_to_csv(times, base_errors, corr_errors, model_info_str):
+    """Saves the error vs. time data to a dedicated CSV file."""
+    df_error = pd.DataFrame({
+        'time_s': times,
+        'base_model_error_m': base_errors,
+        'corrected_model_error_m': corr_errors
+    })
+    save_name = f"error_timeseries_{model_info_str.lower().replace(' ', '_')}.csv"
+    df_error.to_csv(save_name, index=False)
+    print(f"Saved error time series data to {save_name}")
+
+# --- Plotting function (Unchanged) ---
 def plot_results(times, real, sim_base, sim_corr, base_metrics, corr_metrics, model_info_str):
     print("Generating plots...")
-    fig = plt.figure(figsize=(18, 16))
-    gs = fig.add_gridspec(3, 2) # Create a 3x2 grid for subplots
-
-    # Trajectory Plot
+    fig = plt.figure(figsize=(18, 16)); gs = fig.add_gridspec(3, 2)
     ax1 = fig.add_subplot(gs[0, :]); ax1.plot(real['pos_x'], real['pos_y'], 'k-', lw=2, label='Ground Truth')
     ax1.plot(sim_base['pos_x'], sim_base['pos_y'], 'g--', label=f"Base Sim (Final Err: {base_metrics['pos_err_final_m']:.2f} m)")
     ax1.plot(sim_corr['pos_x'], sim_corr['pos_y'], 'r-', lw=2.0, label=f"Corrected Sim (Final Err: {corr_metrics['pos_err_final_m']:.2f} m)")
     ax1.set_xlabel("x [m]"); ax1.set_ylabel("y [m]"); ax1.set_title("Trajectory Comparison"); ax1.legend(); ax1.grid(True); ax1.axis('equal')
-
-    # NEW: Positional Error vs. Time Plot
     ax_pos_err = fig.add_subplot(gs[1, :]);
     ax_pos_err.plot(times, base_metrics['pos_err_vs_time'], 'g--', label=f"Base Sim (Mean Err: {base_metrics['pos_err_mean_m']:.2f} m)")
     ax_pos_err.plot(times, corr_metrics['pos_err_vs_time'], 'r-', label=f"Corrected Sim (Mean Err: {corr_metrics['pos_err_mean_m']:.2f} m)")
     ax_pos_err.set_xlabel("Time (s)"); ax_pos_err.set_ylabel("Positional Error (m)"); ax_pos_err.set_title("Positional Error over Time"); ax_pos_err.legend(); ax_pos_err.grid(True)
-
-    # Speed Plot
     ax2 = fig.add_subplot(gs[2, 0]); ax2.plot(times, real['speed'], 'k-', label='Real'); ax2.plot(times, sim_base['speed'], 'g--', label=f"Base (RMSE: {base_metrics['speed_rmse_mps']:.3f})")
     ax2.plot(times, sim_corr['speed'], 'r-', label=f"Corrected (RMSE: {corr_metrics['speed_rmse_mps']:.3f})"); ax2.set_xlabel("Time (s)"); ax2.set_ylabel("Speed (m/s)"); ax2.set_title("Speed Comparison"); ax2.legend(); ax2.grid(True)
-
-    # Yaw Plot
     ax3 = fig.add_subplot(gs[2, 1]); ax3.plot(times, [wrap_to_pi(y) for y in real['yaw']], 'k-', label='Real'); ax3.plot(times, [wrap_to_pi(y) for y in sim_base['yaw']], 'g--', label=f"Base (RMSE: {base_metrics['yaw_rmse_rad']:.3f})")
     ax3.plot(times, [wrap_to_pi(y) for y in sim_corr['yaw']], 'r-', label=f"Corrected (RMSE: {corr_metrics['yaw_rmse_rad']:.3f})"); ax3.set_xlabel("Time (s)"); ax3.set_ylabel("Yaw (rad)"); ax3.set_title("Yaw Comparison"); ax3.legend(); ax3.grid(True)
-    
     fig.suptitle(f'Long-Term Simulation Evaluation (Model: {model_info_str})', fontsize=16)
     plt.tight_layout(rect=[0, 0.03, 1, 0.96])
     save_name = f"evaluation_long_term_{model_info_str.lower().replace(' ', '_')}.png"
     plt.savefig(save_name); print(f"Saved plot to {save_name}"); plt.show()
-
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Evaluate a trained residual dynamics model.")
@@ -212,10 +204,8 @@ if __name__ == "__main__":
     print(f"Loading model from {args.model} onto {args.device}...")
     ckpt = torch.load(args.model, map_location=args.device)
     model_args = ckpt['args']
-
     encoder_type = ckpt.get('encoder_type', 'transformer'); print(f"Detected Encoder Type: {encoder_type.upper()}")
     encoder_args = {'nhead': model_args.get('tf_nhead', 2), 'd_hid': model_args.get('tf_d_hid', 128), 'nlayers': model_args.get('tf_nlayers', 2), 'dropout': model_args.get('tf_dropout', 0.1)} if encoder_type == 'transformer' else {'nlayers': model_args.get('rnn_nlayers', 2), 'dropout': model_args.get('rnn_dropout', 0.1)}
-
     if 'gp' in ckpt:
         print("Detected Probabilistic (SVGP) model."); model_variant = 'SVGP'
         model = ResidualModel(encoder_type=encoder_type, encoder_args=encoder_args, ckpt_args=model_args, y_mean=ckpt['y_mean'], y_std=ckpt['y_std'], device=args.device)
@@ -241,11 +231,9 @@ if __name__ == "__main__":
     sim_corr, time_corr = run_corrected_simulation(model, meas, ctrl, model_args['hist'], dt, args.device)
     model_info_str = f"{encoder_type.upper()} {model_variant}"
     
-    # --- MODIFICATION: Calculate enhanced metrics ---
     base_metrics = calculate_metrics(real, sim_base)
     corr_metrics = calculate_metrics(real, sim_corr)
     
-    # --- MODIFICATION: Save enhanced metrics to CSV ---
     results_to_save = {
         'model_name': model_info_str, 'sim_duration_s': round(times[-1] - times[0], 2),
         'base_sim_time_s': round(time_base, 4), 'corrected_sim_time_s': round(time_corr, 4),
@@ -262,7 +250,9 @@ if __name__ == "__main__":
     }
     save_results_to_csv(results_to_save)
     
-    # --- MODIFICATION: Print and Plot enhanced metrics ---
+    # --- NEW: SAVE THE ERROR TIME SERIES DATA ---
+    save_error_timeseries_to_csv(times, base_metrics['pos_err_vs_time'], corr_metrics['pos_err_vs_time'], model_info_str)
+    
     print(f"\n--- Metrics Summary for {model_info_str} ---")
     print(f"               | {'Base Sim':<15} | {'Corrected Sim':<15}")
     print(f"---------------|-----------------|-----------------")

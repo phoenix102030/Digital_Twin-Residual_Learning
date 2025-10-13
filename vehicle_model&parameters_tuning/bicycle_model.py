@@ -160,5 +160,6 @@ def main(csv_path: str):
 
 
 if __name__ == "__main__":
-    csv = sys.argv[1] if len(sys.argv) > 1 else "rosbag_aligned_data.csv"
+    # csv = sys.argv[1] if len(sys.argv) > 1 else "rosbag_aligned_data.csv"
+    csv = sys.argv[1] if len(sys.argv) > 1 else "/home/sitong/Digital_Twin-Residual_Learning/residual_learning/test_data/u.csv"
     main(csv)

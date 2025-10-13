@@ -1,5 +1,0 @@
-model_name,sim_duration_s,base_sim_time_s,corrected_sim_time_s,base_pos_err_final_m,base_pos_err_mean_m,base_pos_err_max_m,base_speed_rmse_mps,base_yaw_rmse_rad,corr_pos_err_final_m,corr_pos_err_mean_m,corr_pos_err_max_m,corr_speed_rmse_mps,corr_yaw_rmse_rad
-MOBILEVIT SVGP,8.9,0.0035,4.5713,0.4665,0.2381,0.4665,0.0039,0.177,0.1719,0.094,0.1719,0.0039,0.1657
-TRANSFORMER SVGP,8.9,0.0037,4.0898,0.4665,0.2381,0.4665,0.0039,0.177,0.6138,0.2777,0.6552,0.0039,0.2368
-GRU SVGP,8.9,0.0037,3.7643,0.4665,0.2381,0.4665,0.0039,0.177,0.2851,0.1091,0.2851,0.0039,0.168
-LSTM SVGP,8.9,0.0037,3.7839,0.4665,0.2381,0.4665,0.0039,0.177,0.3144,0.1277,0.3144,0.0039,0.1702
